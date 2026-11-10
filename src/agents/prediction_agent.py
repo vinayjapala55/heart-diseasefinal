@@ -65,39 +65,74 @@ class PredictionXAIAgent:
         self.model: Optional[tf.keras.Model] = None
         self._load_model()
 
-    def _load_model(self):
+    def _load_model(self, num_branches: int = 8):
         from pathlib import Path
         from src.models.checkpoint_io import get_or_create_rosanet_model
         root = Path(__file__).resolve().parent.parent.parent
-        four_valve_chk = root / "dataset" / "models" / "best_rosanet_4valve_model.keras"
         orig_chk = root / "dataset" / "models" / "best_rosanet_model.keras"
-        if self.model_checkpoint_path:
-            chk_path = Path(self.model_checkpoint_path)
-        elif four_valve_chk.exists():
-            chk_path = four_valve_chk
+        four_valve_chk = root / "dataset" / "models" / "best_rosanet_4valve_model.keras"
+
+        if num_branches == 8:
+            actual_branches = 8
+            chk_path = orig_chk if orig_chk.exists() else (Path(self.model_checkpoint_path) if self.model_checkpoint_path and '4valve' not in str(self.model_checkpoint_path) else None)
+        elif num_branches == 4:
+            actual_branches = 4
+            chk_path = four_valve_chk if four_valve_chk.exists() else (orig_chk if orig_chk.exists() else None)
         else:
-            chk_path = orig_chk
-        self.model = get_or_create_rosanet_model(str(chk_path) if chk_path.exists() else None, num_branches=4)
+            actual_branches = num_branches
+            chk_path = Path(self.model_checkpoint_path) if self.model_checkpoint_path else orig_chk
+
+        self.num_branches = actual_branches
+        self.model = get_or_create_rosanet_model(str(chk_path) if chk_path and chk_path.exists() else None, num_branches=actual_branches)
 
     def predict_and_explain(
         self,
-        spectrogram_dict: Dict[str, np.ndarray],  # maps 'Aor', 'Pul', 'Tri', 'Mit' -> (64, 626, 1)
+        spectrogram_dict: Dict[str, np.ndarray],
         session_id: str = "SESSION_UNKNOWN",
         custom_thresholds: Optional[Dict[str, float]] = None
     ) -> PredictionAgentOutput:
         """
-        Executes inference and explainability across the 4 physical valve inputs.
+        Executes inference and explainability across the physical valve inputs (8-branch or 4-valve).
         """
         thresholds = get_calibrated_thresholds()
         if custom_thresholds:
             thresholds.update(custom_thresholds)
 
-        # Ensure correct valve branch order: Aor, Mit, Pul, Tri
-        ordered_valves = ['Aor', 'Mit', 'Pul', 'Tri']
-        ordered_specs = [spectrogram_dict[v] for v in ordered_valves]
-        ordered_names = [f"{v} Valve" for v in ordered_valves]
+        # Detect 8-recording posture configuration vs legacy 4-valve
+        is_8_recording = any(k.startswith(('sit_', 'sup_')) for k in spectrogram_dict.keys()) or len(spectrogram_dict) >= 8
 
-        # Batch inputs for model: list of 4 arrays, each shape (1, 64, 626, 1)
+        if is_8_recording:
+            if getattr(self, 'num_branches', None) != 8 or self.model is None or len(self.model.inputs) != 8:
+                self._load_model(num_branches=8)
+            # RosaNet 8-branch strict tensor order:
+            # 1: sit_Aor, 2: sit_Mit, 3: sit_Pul, 4: sit_Tri, 5: sup_Aor, 6: sup_Mit, 7: sup_Pul, 8: sup_Tri
+            ordered_keys = [
+                'sit_Aor', 'sit_Mit', 'sit_Pul', 'sit_Tri',
+                'sup_Aor', 'sup_Mit', 'sup_Pul', 'sup_Tri'
+            ]
+            ordered_names = [
+                'Sitting - Aortic Valve',
+                'Sitting - Mitral Valve',
+                'Sitting - Pulmonary Valve',
+                'Sitting - Tricuspid Valve',
+                'Supine - Aortic Valve',
+                'Supine - Mitral Valve',
+                'Supine - Pulmonary Valve',
+                'Supine - Tricuspid Valve'
+            ]
+        else:
+            if getattr(self, 'num_branches', None) != 4 or len(self.model.inputs) != 4:
+                self._load_model(num_branches=4)
+            ordered_keys = ['Aor', 'Mit', 'Pul', 'Tri']
+            ordered_names = ['Aortic Valve', 'Mitral Valve', 'Pulmonary Valve', 'Tricuspid Valve']
+
+        missing_in_spec = [k for k in ordered_keys if k not in spectrogram_dict]
+        if missing_in_spec:
+            raise ValueError(f"spectrogram_dict is missing required branch input(s): {missing_in_spec}")
+
+        ordered_specs = [spectrogram_dict[k] for k in ordered_keys]
+
+        # Batch inputs for model: list of K arrays, each shape (1, 64, 626, 1)
         batch_inputs = [np.expand_dims(spec, axis=0) for spec in ordered_specs]
 
         # Check if session matches an authentic clinical patient preset
@@ -377,7 +412,7 @@ class PredictionXAIAgent:
 
         return PredictionAgentOutput(
             session_id=session_id,
-            model_version="RosaNet-4Valve-v1.0",
+            model_version=f"RosaNet-{'8Branch' if is_8_recording else '4Valve'}-v1.0",
             raw_probabilities=prob_dict,
             decision_thresholds=thresholds,
             detected_conditions=detected_conditions,

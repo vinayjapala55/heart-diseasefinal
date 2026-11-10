@@ -22,10 +22,25 @@ from scipy import signal
 
 from src.agents.schemas import QualityAgentOutput, ValveSignalInfo
 
-REQUIRED_VALVES = ['Aor', 'Pul', 'Tri', 'Mit']
+REQUIRED_RECORDINGS = [
+    'sit_Aor', 'sit_Pul', 'sit_Tri', 'sit_Mit',
+    'sup_Aor', 'sup_Pul', 'sup_Tri', 'sup_Mit'
+]
+REQUIRED_VALVES = REQUIRED_RECORDINGS  # Alias for backward compatibility
 TARGET_SR = 2000
 LOWPASS_CUTOFF = 1000
 DEFAULT_FRAMES = 626
+
+RECORDING_LABELS = {
+    'sit_Aor': 'Sitting - Aortic Valve',
+    'sit_Pul': 'Sitting - Pulmonary Valve',
+    'sit_Tri': 'Sitting - Tricuspid Valve',
+    'sit_Mit': 'Sitting - Mitral Valve',
+    'sup_Aor': 'Supine - Aortic Valve',
+    'sup_Pul': 'Supine - Pulmonary Valve',
+    'sup_Tri': 'Supine - Tricuspid Valve',
+    'sup_Mit': 'Supine - Mitral Valve'
+}
 
 
 class SignalQualityAgent:
@@ -52,9 +67,21 @@ class SignalQualityAgent:
         timestamp = datetime.now().isoformat()
         valves_inspected: List[ValveSignalInfo] = []
         spectrogram_dict: Dict[str, np.ndarray] = {}
-        missing_valves = [v for v in REQUIRED_VALVES if v not in valve_files]
+        # Determine whether input is 8 recordings (Sitting + Supine) or legacy 4 valves
+        is_8_recording = any(k.startswith(('sit_', 'sup_')) for k in valve_files.keys()) or len(valve_files) > 4
+        target_keys = REQUIRED_RECORDINGS if is_8_recording else ['Aor', 'Pul', 'Tri', 'Mit']
+        missing_valves = [k for k in target_keys if k not in valve_files or valve_files[k] is None]
 
         if missing_valves:
+            if is_8_recording:
+                missing_desc = [RECORDING_LABELS.get(k, k) for k in missing_valves]
+                err_msg = (
+                    "Session requires all 8 heart sound recordings (Sitting: Aor, Pul, Tri, Mit; Supine: Aor, Pul, Tri, Mit). "
+                    f"Missing {len(missing_valves)} recording(s): {', '.join(missing_desc)}"
+                )
+            else:
+                err_msg = f"Session requires recordings for all 4 valves: Aortic, Pulmonary, Tricuspid, and Mitral. Missing: {missing_valves}"
+
             output = QualityAgentOutput(
                 session_id=session_id,
                 timestamp=timestamp,
@@ -62,15 +89,15 @@ class SignalQualityAgent:
                 required_valves_present=False,
                 valves_inspected=[],
                 spectrograms_generated=False,
-                summary=f"Validation Failed: Missing required valve recording(s): {', '.join(missing_valves)}.",
-                error_message=f"Session requires recordings for all 4 valves: Aortic, Pulmonary, Tricuspid, and Mitral. Missing: {missing_valves}"
+                summary=f"Validation Failed: Missing required recording(s): {', '.join(missing_valves)}.",
+                error_message=err_msg
             )
             return output, {}
 
         overall_status = "PASS"
         warnings = []
 
-        for valve in REQUIRED_VALVES:
+        for valve in target_keys:
             val_input = valve_files[valve]
             filename = getattr(val_input, 'filename', str(val_input))
 
@@ -182,7 +209,7 @@ class SignalQualityAgent:
             overall_status = "WARN"
 
         summary = (
-            f"Quality Inspection {overall_status}: All 4 anatomical valve recordings verified. "
+            f"Quality Inspection {overall_status}: All {len(target_keys)} anatomical recordings verified. "
             f"Durations: {', '.join([f'{v.valve_location}: {v.duration_seconds}s' for v in valves_inspected])}. "
             f"Standardized to 2000 Hz Log-Mel Spectrograms (64x626)."
         )
@@ -195,7 +222,7 @@ class SignalQualityAgent:
             status=overall_status,
             required_valves_present=True,
             valves_inspected=valves_inspected,
-            spectrograms_generated=bool(len(spectrogram_dict) == 4),
+            spectrograms_generated=bool(len(spectrogram_dict) == len(target_keys)),
             summary=summary,
             error_message=None if overall_status != "FAIL" else "Signal validation errors detected in one or more valve inputs."
         )

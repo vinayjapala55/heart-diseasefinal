@@ -52,9 +52,10 @@ def initialize_system():
     global ORCHESTRATOR
     print("[INFO] Initializing Multi-Agent Diagnostic Pipeline Orchestrator...")
     try:
-        model_4v = ROOT_DIR / "dataset" / "models" / "best_rosanet_4valve_model.keras"
         model_orig = ROOT_DIR / "dataset" / "models" / "best_rosanet_model.keras"
-        model_path = model_4v if model_4v.exists() else model_orig
+        model_4v = ROOT_DIR / "dataset" / "models" / "best_rosanet_4valve_model.keras"
+        # Prioritize full 8-branch patient model, falling back to 4-valve if not available
+        model_path = model_orig if model_orig.exists() else model_4v
         chroma_dir = ROOT_DIR / "dataset" / "rag" / "chroma_db"
         ORCHESTRATOR = DiagnosticPipelineOrchestrator(
             model_checkpoint_path=str(model_path) if model_path.exists() else None,
@@ -75,9 +76,13 @@ def get_orchestrator() -> Optional[DiagnosticPipelineOrchestrator]:
 def get_system_status():
     return {
         "status": "online",
-        "engine": "RosaNet 4-Valve Phonocardiogram Multi-Agent Engine",
+        "engine": "RosaNet 8-Branch Patient Auscultation Multi-Agent Engine",
         "target_sr": 2000,
-        "input_valves_required": ["Aor", "Mit", "Pul", "Tri"],
+        "posture_groups": ["SITTING", "SUPINE"],
+        "recordings_required": [
+            "sit_Aor", "sit_Pul", "sit_Tri", "sit_Mit",
+            "sup_Aor", "sup_Pul", "sup_Tri", "sup_Mit"
+        ],
         "orchestrator_ready": ORCHESTRATOR is not None
     }
 
@@ -85,7 +90,8 @@ def get_system_status():
 @app.get("/api/sample_patients")
 def get_sample_patients():
     """
-    Returns curated authentic clinical 4-valve recording sets from the dataset.
+    Returns curated authentic clinical 8-recording patient sets from the dataset.
+    Organized into TWO POSTURE GROUPS: SITTING (Aor, Pul, Tri, Mit) and SUPINE (Aor, Pul, Tri, Mit).
     """
     train_dir = ROOT_DIR / "train"
     if not train_dir.exists():
@@ -101,25 +107,35 @@ def get_sample_patients():
         ("patient_003", "Combined Multi-Valvular Disease (AS+AR)", "Multi-Disease", "MD_003")
     ]
 
+    recording_keys = [
+        ("sit_Aor", "sit_Aor"),
+        ("sit_Pul", "sit_Pul"),
+        ("sit_Tri", "sit_Tri"),
+        ("sit_Mit", "sit_Mit"),
+        ("sup_Aor", "sup_Aor"),
+        ("sup_Pul", "sup_Pul"),
+        ("sup_Tri", "sup_Tri"),
+        ("sup_Mit", "sup_Mit")
+    ]
+
     patients = []
     for pid, label, category, prefix in curated_pids:
-        # Match sitting files for the 4 valves
-        aor = f"{prefix}_sit_Aor.wav"
-        mit = f"{prefix}_sit_Mit.wav"
-        pul = f"{prefix}_sit_Pul.wav"
-        tri = f"{prefix}_sit_Tri.wav"
+        valves_map = {}
+        all_found = True
+        for key, suffix in recording_keys:
+            fname = f"{prefix}_{suffix}.wav"
+            if (train_dir / fname).exists():
+                valves_map[key] = fname
+            else:
+                all_found = False
+                break
 
-        if all((train_dir / f).exists() for f in [aor, mit, pul, tri]):
+        if all_found:
             patients.append({
                 "patient_id": pid,
                 "label": label,
                 "category": category,
-                "valves": {
-                    "Aor": aor,
-                    "Mit": mit,
-                    "Pul": pul,
-                    "Tri": tri
-                }
+                "valves": valves_map
             })
 
     return {"patients": patients}
@@ -129,7 +145,6 @@ def get_sample_patients():
 def stream_sample_audio(filename: str):
     file_path = ROOT_DIR / "train" / filename
     if not file_path.exists():
-        # Check augmented
         file_path = ROOT_DIR / "dataset" / "augmented" / "train" / filename
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="Audio file not found.")
@@ -138,6 +153,17 @@ def stream_sample_audio(filename: str):
 
 @app.post("/api/predict_patient")
 async def analyze_patient_session(
+    # GROUP 1: SITTING
+    sit_aor: Optional[UploadFile] = File(None),
+    sit_pul: Optional[UploadFile] = File(None),
+    sit_tri: Optional[UploadFile] = File(None),
+    sit_mit: Optional[UploadFile] = File(None),
+    # GROUP 2: SUPINE
+    sup_aor: Optional[UploadFile] = File(None),
+    sup_pul: Optional[UploadFile] = File(None),
+    sup_tri: Optional[UploadFile] = File(None),
+    sup_mit: Optional[UploadFile] = File(None),
+    # Legacy 4-valve parameters
     file_aor: Optional[UploadFile] = File(None),
     file_mit: Optional[UploadFile] = File(None),
     file_pul: Optional[UploadFile] = File(None),
@@ -146,56 +172,97 @@ async def analyze_patient_session(
 ):
     """
     Main Multi-Valvular Diagnostic Endpoint:
-    Accepts 4 distinct recordings for Aortic, Mitral, Pulmonary, and Tricuspid sites.
-    Executes Agent 1 (Quality) -> Agent 2 (Prediction & XAI) -> Agent 3 (RAG) -> Clinical Report.
+    Accepts 8 heart-sound WAV recordings organized into TWO POSTURE GROUPS:
+      SITTING: Aortic, Pulmonary, Tricuspid, Mitral
+      SUPINE:  Aortic, Pulmonary, Tricuspid, Mitral
+    Executes Agent 1 (Quality & Preprocessing) -> Agent 2 (RosaNet 8-Branch Prediction & XAI) -> Agent 3 (RAG) -> Clinical Report.
     """
     orchestrator = get_orchestrator()
     if orchestrator is None:
         raise HTTPException(status_code=500, detail="Diagnostic Orchestrator is not initialized.")
 
-    valve_inputs = {}
+    recording_inputs = {}
     train_dir = ROOT_DIR / "train"
 
+    # Map parameter names to canonical internal branch keys
+    param_map_8 = {
+        "sit_Aor": sit_aor,
+        "sit_Pul": sit_pul,
+        "sit_Tri": sit_tri,
+        "sit_Mit": sit_mit,
+        "sup_Aor": sup_aor,
+        "sup_Pul": sup_pul,
+        "sup_Tri": sup_tri,
+        "sup_Mit": sup_mit
+    }
+    label_map_8 = {
+        "sit_Aor": "Sitting Aortic (sit_Aor)",
+        "sit_Pul": "Sitting Pulmonary (sit_Pul)",
+        "sit_Tri": "Sitting Tricuspid (sit_Tri)",
+        "sit_Mit": "Sitting Mitral (sit_Mit)",
+        "sup_Aor": "Supine Aortic (sup_Aor)",
+        "sup_Pul": "Supine Pulmonary (sup_Pul)",
+        "sup_Tri": "Supine Tricuspid (sup_Tri)",
+        "sup_Mit": "Supine Mitral (sup_Mit)"
+    }
+
     if sample_patient_id:
-        # Load authentic sample set
         samples = get_sample_patients()["patients"]
         matched = next((p for p in samples if p["patient_id"] == sample_patient_id), None)
         if not matched:
             raise HTTPException(status_code=404, detail=f"Sample patient {sample_patient_id} not found.")
 
-        for v_name in ["Aor", "Mit", "Pul", "Tri"]:
-            f_path = train_dir / matched["valves"][v_name]
+        for key, fname in matched["valves"].items():
+            f_path = train_dir / fname
+            if not f_path.exists():
+                f_path = ROOT_DIR / "dataset" / "augmented" / "train" / fname
             with open(f_path, "rb") as f:
-                valve_inputs[v_name] = f.read()
+                recording_inputs[key] = f.read()
 
         session_id = f"SESSION-{sample_patient_id.upper()}"
         metadata = {"patient_id": sample_patient_id}
 
     else:
-        # User uploaded 4 files
-        uploaded = {
-            "Aor": file_aor,
-            "Mit": file_mit,
-            "Pul": file_pul,
-            "Tri": file_tri
-        }
-        missing = [v for v, f in uploaded.items() if f is None]
-        if missing:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Analysis requires recordings for all 4 valves. Missing: {', '.join(missing)}"
-            )
+        # Check if 8 posture-specific files or 4 legacy files are provided
+        has_any_8 = any(f is not None for f in param_map_8.values())
 
-        for v_name, up_file in uploaded.items():
-            content = await up_file.read()
-            valve_inputs[v_name] = content
+        if has_any_8:
+            missing = [k for k, f in param_map_8.items() if f is None]
+            if missing:
+                missing_names = [label_map_8[k] for k in missing]
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Analysis requires all 8 recordings (4 Sitting + 4 Supine). Missing {len(missing)} recording(s): {', '.join(missing_names)}"
+                )
+
+            for key, up_file in param_map_8.items():
+                content = await up_file.read()
+                recording_inputs[key] = content
+
+        else:
+            # Fallback legacy 4 files
+            legacy_uploaded = {
+                "Aor": file_aor,
+                "Mit": file_mit,
+                "Pul": file_pul,
+                "Tri": file_tri
+            }
+            missing_legacy = [v for v, f in legacy_uploaded.items() if f is None]
+            if missing_legacy:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Analysis requires either all 8 recordings or all 4 valve files. Missing: {', '.join(missing_legacy)}"
+                )
+            for v_name, up_file in legacy_uploaded.items():
+                content = await up_file.read()
+                recording_inputs[v_name] = content
 
         session_id = f"SESSION-CUSTOM-{os.urandom(3).hex().upper()}"
         metadata = None
 
     try:
         report: FinalClinicalReport = orchestrator.process_session(
-            valve_files=valve_inputs,
+            valve_files=recording_inputs,
             session_id=session_id,
             patient_metadata=metadata
         )
@@ -233,8 +300,24 @@ if web_dir.exists():
             headers={"Cache-Control": "no-cache, no-store, must-revalidate", "Pragma": "no-cache"}
         )
 
+    @app.get("/results.html")
+    def get_results_html():
+        return FileResponse(
+            str(web_dir / "results.html"),
+            media_type="text/html",
+            headers={"Cache-Control": "no-cache, no-store, must-revalidate", "Pragma": "no-cache"}
+        )
+
+    @app.get("/results.js")
+    def get_results_js():
+        return FileResponse(
+            str(web_dir / "results.js"),
+            media_type="application/javascript",
+            headers={"Cache-Control": "no-cache, no-store, must-revalidate", "Pragma": "no-cache"}
+        )
+
     app.mount("/", StaticFiles(directory=str(web_dir), html=True), name="web")
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+    uvicorn.run("app:app", host="127.0.0.1", port=8000, reload=True)

@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Diagnostic Report | BMD-HS RosaNet Workstation</title>
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css?v=20261110_simple">
+</head>
+<body>
+
+    <!-- Header with Back Button -->
+    <header class="site-header">
+        <div class="header-container">
+            <div class="brand-block">
+                <div class="brand-icon">♥</div>
+                <div>
+                    <h1 class="brand-title">BMD-HS Clinical Diagnostic Suite</h1>
+                    <p class="brand-sub">Diagnostic Evaluation Findings &bull; RosaNet 8-Branch AI</p>
+                </div>
+            </div>
+            <div class="header-actions">
+                <a href="index.html" class="btn btn-outline btn-sm">&larr; Back to Auscultation Deck</a>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Results Layout -->
+    <main class="main-container results-page-layout">
+
+        <!-- Top Control Bar -->
+        <div class="action-bar" style="border-bottom: 1px solid var(--border-light); padding-bottom: 14px;">
+            <div class="action-status-text">
+                <strong id="resPatientId">SESSION-PATIENT</strong> &bull;
+                <span id="resTimestamp">--</span> &bull;
+                <span id="resModelVersion">RosaNet-8Branch-v1.0</span>
+            </div>
+            <div class="action-buttons">
+                <button class="btn btn-outline btn-sm" id="btnCopyNote">📋 Copy Clinical Note</button>
+                <button class="btn btn-primary btn-sm" id="btnPrintReport">🖨️ Print / Save PDF</button>
+                <a href="index.html" class="btn btn-outline btn-sm">&larr; New Patient</a>
+            </div>
+        </div>
+
+        <!-- 1. Primary Diagnosis Banner -->
+        <section class="diagnosis-banner" id="heroBanner">
+            <div>
+                <div class="banner-meta">OFFICIAL CLINICAL IMPRESSION</div>
+                <h2 class="banner-diagnosis-title" id="resPrimaryDiagnosis">Diagnostic Evaluation Complete</h2>
+                <p class="banner-diagnosis-sub" id="resSecondaryDescription">Synthesized hemodynamic phonocardiogram analysis across all 8 posture-valve recordings.</p>
+            </div>
+            <div>
+                <div class="risk-pill" id="resRiskPill">EVALUATING</div>
+            </div>
+        </section>
+
+        <!-- 2. Multilabel Valvular Disease Probabilities -->
+        <section class="section-box">
+            <div class="section-title-row">
+                <h3 class="section-title">Valvular Heart Disease Probability Spectrum</h3>
+                <span class="section-hint">Calibrated against clinical decision thresholds (N, AS, AR, MR, MS)</span>
+            </div>
+
+            <div class="probs-cards-row" id="probsGrid">
+                <!-- Dynamically populated by results.js -->
+            </div>
+        </section>
+
+        <!-- 3. Murmur Epicenter & Guidelines Grid -->
+        <div class="details-split-grid">
+            
+            <!-- Acoustic Epicenter & Valve Attribution -->
+            <section class="findings-box">
+                <h3 class="findings-title">Acoustic Murmur Epicenter & Valve Attribution</h3>
+                <div class="findings-list" id="xaiContainer">
+                    <!-- Populated by results.js -->
+                </div>
+            </section>
+
+            <!-- ACC/AHA Evidence -->
+            <section class="findings-box">
+                <h3 class="findings-title">2020 ACC/AHA Valvular Guidelines (Clinical Evidence)</h3>
+                <div class="findings-list" id="guidelinesContainer">
+                    <!-- Populated by results.js -->
+                </div>
+            </section>
+        </div>
+
+        <!-- 4. Signal Quality Audit -->
+        <section class="section-box">
+            <div class="section-title-row">
+                <h3 class="section-title">Phonocardiogram Signal Quality & Preprocessing QC</h3>
+                <span class="section-hint">4th-Order Butterworth (25-400 Hz) &bull; 2,000 Hz Standardization</span>
+            </div>
+            <div id="qcSummaryBox" class="finding-item" style="border-left-color: var(--success); margin-bottom: 10px;">
+                <strong>Signal Verification:</strong> All 8 auscultation channels passed waveform integrity and filter verification.
+            </div>
+        </section>
+
+        <!-- 5. EMR Consultation Record -->
+        <section class="emr-box">
+            <div class="emr-header">
+                <h3 class="emr-title">Electronic Medical Consultation Note</h3>
+                <span class="section-hint">Formatted for Hospital EMR / EHR integration</span>
+            </div>
+            <pre class="emr-text" id="reportMarkdownPre">Loading clinical consultation note...</pre>
+        </section>
+
+        <!-- Bottom Action Bar -->
+        <div style="display: flex; justify-content: space-between; align-items: center; padding: 10px 0;">
+            <a href="index.html" class="btn btn-outline">&larr; Return to Diagnostic Console</a>
+            <button class="btn btn-primary" onclick="window.print()">🖨️ Print Complete Diagnostic Report</button>
+        </div>
+
+    </main>
+
+    <!-- Footer -->
+    <footer class="site-footer">
+        BMD-HS Clinical Diagnostic Suite &bull; RosaNet Multi-Agent AI &bull; Investigational Clinical Decision Support
+    </footer>
+
+    <script src="results.js?v=20261110_simple"></script>
+</body>
+</html>
+

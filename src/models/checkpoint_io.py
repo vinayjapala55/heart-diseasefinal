@@ -65,7 +65,7 @@ def load_rosanet_weights_safe(
 
 def get_or_create_rosanet_model(
     checkpoint_path: Optional[str] = None,
-    num_branches: int = 4
+    num_branches: int = 8
 ) -> tf.keras.Model:
     """
     Builds the RosaNet model (4-valve or 8-branch) and loads trained weights if available.

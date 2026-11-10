@@ -59,12 +59,17 @@ class DiagnosticPipelineOrchestrator:
 
         if quality_summary.status == "FAIL":
             # Early abort on critical quality failure
+            fallback_keys = (
+                ['sit_Aor', 'sit_Mit', 'sit_Pul', 'sit_Tri', 'sup_Aor', 'sup_Mit', 'sup_Pul', 'sup_Tri']
+                if any(k.startswith(('sit_', 'sup_')) for k in valve_files)
+                else ['Aor', 'Mit', 'Pul', 'Tri']
+            )
             return self.report_generator.synthesize_report(
                 session_id=session_id,
                 quality=quality_summary,
                 prediction=self.prediction_agent.predict_and_explain(
-                    # Fallback zeros
-                    {v: np.zeros((64, 626, 1), dtype=np.float32) for v in ['Aor', 'Mit', 'Pul', 'Tri']},
+                    # Fallback zeros matching branch count
+                    {v: np.zeros((64, 626, 1), dtype=np.float32) for v in fallback_keys},
                     session_id=session_id
                 ),
                 evidence=self.evidence_agent.retrieve_clinical_evidence({}, [], session_id=session_id),
